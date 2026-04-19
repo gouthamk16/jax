@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Virtual env
+.venv/
+venv/
+env/
+
+# JAX / ML
+*.npy
+*.npz
+*.ckpt
+*.pkl
+checkpoints/
+wandb/
+logs/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Generated
+*.png
+*.jpg
