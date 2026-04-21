@@ -86,7 +86,7 @@ class DownBlock(nn.Module):
                     features = self.out_channels,
                     kernel_size = (3, 3),
                     strides = (1, 1),
-                    padding = 1,
+                    padding = 1
                 ),  
             ])
             for _ in range(self.num_layers)
@@ -95,16 +95,25 @@ class DownBlock(nn.Module):
             [nn.GroupNorm(num_groups=8)] for _ in range(self.num_layers)
         ] 
         self.attentions = [
-            [nn.MultiHeadAttention(
-                num_heads = self.num_heads,
-            )]
+            [nn.MultiHeadAttention(num_heads = self.num_heads)] for _ in range(self.num_layers)
         ]
+        self.residual_input_conv = [
+            [nn.Conv(features=self.out_channels, kernel_size=(1, 1))] for _ in range(self.num_layers)
+        ]
+        self.down_sample_conv = nn.Conv(
+            features = self.out_channels, 
+            kernel_size = (4, 4),
+            strides = (2, 2),
+            padding = 1
+        ) if self.down_sample else nn.identity
+
 
     @nn.compact
     def __call__(self, x, train: bool = False):
-        for feat in self.features[:-1]:
-            x = nn.Dense(feat)(x)
-            x = nn.relu(x)
-            x = nn.Dropout(0.3, deterministic=not train)(x)
-        x = nn.Dense(self.features[-1])(x)
+        # Placeholder body for now, will start once I'm done with DownBlock
+        # for feat in self.features[:-1]:
+        #     x = nn.Dense(feat)(x)
+        #     x = nn.relu(x)
+        #     x = nn.Dropout(0.3, deterministic=not train)(x)
+        # x = nn.Dense(self.features[-1])(x)
         return x
