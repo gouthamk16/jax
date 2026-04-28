@@ -1,0 +1,29 @@
+dataset:
+  name: cifar100
+  path: ./data
+  im_size: 32
+
+model:
+  img_channels: 3
+  down_channels: [64, 128, 256, 256]   # 3 down blocks
+  mid_channels: [256, 256]             # 1 mid block; [0]==down[-1], [-1]==down[-2]
+  time_emb_dim: 256
+  down_sample: [true, true, false]     # 32->16->8->8
+  num_down_layers: 1
+  num_mid_layers: 1
+  num_up_layers: 1
+
+diffusion:
+  num_timesteps: 1000
+  beta_start: 0.0001
+  beta_end: 0.02
+
+training:
+  batch_size: 16
+  lr: 1e-4
+  num_epochs: 100
+  seed: 42
+  ckpt_dir: ./checkpoints
+  sample_dir: ./samples
+  save_every: 10
+  sample_every: 10
