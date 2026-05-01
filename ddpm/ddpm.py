@@ -1,7 +1,6 @@
 ## WIP
-
 import os
-os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"  # don't grab 90% of GPU upfront
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"  # don't allocate 90% of GPU upfront
 
 import jax
 import jax.numpy as jnp
@@ -9,11 +8,9 @@ import flax.linen as nn
 from typing import Any
 import tqdm
 
-
 jax.config.update("jax_default_device", jax.devices("gpu")[0])
 
 ## Linear noise scheduler
-
 class LinearNoiseScheduler:
     def __init__(self, num_timesteps, beta_start, beta_end):
         self.num_timesteps = num_timesteps
@@ -40,7 +37,7 @@ class LinearNoiseScheduler:
         # Apply and return forward process equation
         return (sqrt_alpha_cumulative_prod * original + sqrt_one_minus_alpha_cumulative_prod * noise)
 
-    # takes in xₜ (a noisy image at step t) and the UNet's noise_pred (its guess of what noise is in the image), and outputs xₜ₋₁ (a slightly less noisy image)
+    # takes in xt (a noisy image at step t) and the UNet's noise_pred (its guess of what noise is in the image), and outputs x(t-1) (a slightly less noisy image)
     def sample_prev_timestep(self, xt, noise_pred, t, key):
         x0 = ((xt - (self.sqrt_one_minus_alpha_cumulative_prod[t] * noise_pred)) / jnp.sqrt(self.alpha_cumulative_prod[t]))
         x0 = jnp.clip(x0, -1.0, 1.0)
@@ -326,72 +323,7 @@ class Unet(nn.Module):
         out = nn.activation.silu(out)
         return self.conv_out(out)
     
-# Training loop
 
-import optax
-import yaml
-import numpy as np
-import orbax.checkpoint as ocp
-# One problem - jax does not have a built in dataloader, have to still use torch
-from torch.utils.data import DataLoader
-import torchvision
-import torchvision.transforms as transforms
-from tqdm import tqdm
-
-# Our training and model configs are in config.yaml, load
-config_path = "config.yaml"
-with open(config_path, 'r') as f:
-    config = yaml.safe_load(f)
-
-diffusion_config = config["diffusion"]
-dataset_config = config["dataset"]
-model_config = config["model"]
-train_config = config["training"]
-checkpointer = ocp.PyTreeCheckpointer()
-ckpt_dir = os.path.abspath(train_config['ckpt_dir'])
-
-transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-])
-dataset = torchvision.datasets.CIFAR100(
-    root=dataset_config['path'],
-    train=True,
-    download=True,
-    transform=transform
-)
-loader = DataLoader(
-    dataset,
-    batch_size=train_config['batch_size'],
-    shuffle=True,
-    num_workers=0,
-    drop_last=True
-)
-
-# Initialize scheduler
-scheduler = LinearNoiseScheduler(
-    num_timesteps=diffusion_config['num_timesteps'],
-    beta_start=diffusion_config['beta_start'],
-    beta_end=diffusion_config['beta_end']
-)
-# Initialize the model
-model = Unet(
-    img_channels=model_config['img_channels'],
-    down_channels=model_config['down_channels'],
-    mid_channels=model_config['mid_channels'],
-    t_emb_dim=model_config['time_emb_dim'],
-    down_sample=model_config['down_sample'],
-    num_down_layers=model_config['num_down_layers'],
-    num_mid_layers=model_config['num_mid_layers'],
-    num_up_layers=model_config['num_up_layers'],
-)
-
-key = jax.random.PRNGKey(train_config['seed'])
-key, init_key = jax.random.split(key)
-
-dummy_x = jnp.ones((1, 32, 32, 3))
-dummy_t = jnp.ones((1,), dtype=jnp.int32)
-params = model.init(init_key, dummy_x, dummy_t)['params']
 
 def get_latest_checkpoint(ckpt_dir):
     if not os.path.isdir(ckpt_dir):
@@ -413,61 +345,135 @@ def get_latest_checkpoint(ckpt_dir):
 
     return latest_path, latest_epoch
 
-latest_ckpt_path, start_epoch = get_latest_checkpoint(ckpt_dir)
-if latest_ckpt_path is not None:
-    print(f'Resuming from checkpoint: {latest_ckpt_path}', flush=True)
-    params = checkpointer.restore(latest_ckpt_path, item=params)
+def train():
+    # Training loop
+    import optax
+    import yaml
+    import numpy as np
+    import orbax.checkpoint as ocp
+    # One problem - jax does not have a built in dataloader, have to still use torch
+    from torch.utils.data import DataLoader
+    import torchvision
+    import torchvision.transforms as transforms
+    from tqdm import tqdm
+    
+    # Our training and model configs are in config.yaml, load
+    config_path = "config.yaml"
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    diffusion_config = config["diffusion"]
+    dataset_config = config["dataset"]
+    model_config = config["model"]
+    train_config = config["training"]
+    checkpointer = ocp.PyTreeCheckpointer()
+    ckpt_dir = os.path.abspath(train_config['ckpt_dir'])
+    im_size = dataset_config["im_size"]
 
-# Optimizer setup
-learning_rate = float(train_config['lr'])
-optimizer = optax.adam(learning_rate=learning_rate)
-opt_state = optimizer.init(params)
-
-# Loss Function
-def loss_fn(params, batch, noise, t):
-    noisy_img = scheduler.add_noise(batch, noise, t)
-    noise_pred = model.apply({'params': params}, noisy_img, t)
-    return jnp.mean((noise_pred - noise) ** 2)
-
-# Train Step and loop
-@jax.jit
-def train_step(params, opt_state, batch, noise, t):
-    loss, grads = jax.value_and_grad(loss_fn)(params, batch, noise, t)
-    updates, new_opt_state = optimizer.update(grads, opt_state, params)
-    new_params = optax.apply_updates(params, updates)
-    return new_params, new_opt_state, loss
-
-best_mean_loss = float('inf') # To check whether the running loss is improving
-
-for epoch in range(start_epoch, train_config['num_epochs']):
-    losses = []
-    progress_bar = tqdm(
-        loader,
-        desc=f"Epoch {epoch + 1}/{train_config['num_epochs']}",
-        unit="batch",
-        dynamic_ncols=True,
+    # CIFAR100
+    transform = transforms.Compose([
+        transforms.Resize((im_size, im_size)),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    ])
+    dataset = torchvision.datasets.CIFAR100(
+        root=dataset_config['path'],
+        train=True,
+        download=True,
+        transform=transform
     )
-    for batch, _ in progress_bar:
-        batch = jnp.array(batch) # Converting torch tensor -> jnp array
-        batch = jnp.transpose(batch, (0, 2, 3, 1)) # NCHW -> NHWC
-        key, noise_key, t_key = jax.random.split(key, 3)
-        noise = jax.random.normal(noise_key, batch.shape)
-        t = jax.random.randint(t_key, (batch.shape[0],), 0, diffusion_config['num_timesteps'])
-        params, opt_state, loss = train_step(params, opt_state, batch, noise, t)
-        loss_value = float(loss)
-        losses.append(loss_value)
-        progress_bar.set_postfix(
-            loss=f"{loss_value:.4f}",
-            avg_loss=f"{np.mean(losses):.4f}",
-        )
-    epoch_mean_loss = np.mean(losses)
-    tqdm.write(f'Epoch {epoch+1} | Loss: {epoch_mean_loss:.4f}')
-    if epoch_mean_loss < best_mean_loss:
-        best_mean_loss = epoch_mean_loss
-        checkpointer.save(      
-            os.path.join(ckpt_dir, f'epoch_{epoch + 1}'),
-            params,
-            force=True
-        )
+    loader = DataLoader(
+        dataset,
+        batch_size=train_config['batch_size'],
+        shuffle=True,
+        num_workers=0,
+        drop_last=True
+    )
+    
+    # Initialize scheduler
+    scheduler = LinearNoiseScheduler(
+        num_timesteps=diffusion_config['num_timesteps'],
+        beta_start=diffusion_config['beta_start'],
+        beta_end=diffusion_config['beta_end']
+    )
+    # Initialize the model
+    model = Unet(
+        img_channels=model_config['img_channels'],
+        down_channels=model_config['down_channels'],
+        mid_channels=model_config['mid_channels'],
+        t_emb_dim=model_config['time_emb_dim'],
+        down_sample=model_config['down_sample'],
+        num_down_layers=model_config['num_down_layers'],
+        num_mid_layers=model_config['num_mid_layers'],
+        num_up_layers=model_config['num_up_layers'],
+    )
+    
+    key = jax.random.PRNGKey(train_config['seed'])
+    key, init_key = jax.random.split(key)
 
+    dummy_x = jnp.ones((1, im_size, im_size, model_config["img_channels"]))
+    dummy_t = jnp.ones((1,), dtype=jnp.int32)
+    params = model.init(init_key, dummy_x, dummy_t)['params']
+    
+    latest_ckpt_path, start_epoch = get_latest_checkpoint(ckpt_dir)
+    if latest_ckpt_path is not None:
+        print(f'Resuming from checkpoint: {latest_ckpt_path}', flush=True)
+        params = checkpointer.restore(latest_ckpt_path, item=params)
+    else:
+        print(f"No saved checkpoint found in {ckpt_dir}, starting training from 0")
+    
+    # Optimizer setup
+    learning_rate = float(train_config['lr'])
+    optimizer = optax.adam(learning_rate=learning_rate)
+    opt_state = optimizer.init(params)
+    
+    # Loss Function
+    def loss_fn(params, batch, noise, t):
+        noisy_img = scheduler.add_noise(batch, noise, t)
+        noise_pred = model.apply({'params': params}, noisy_img, t)
+        return jnp.mean((noise_pred - noise) ** 2)
+    
+    # Train Step and loop
+    @jax.jit
+    def train_step(params, opt_state, batch, noise, t):
+        loss, grads = jax.value_and_grad(loss_fn)(params, batch, noise, t)
+        updates, new_opt_state = optimizer.update(grads, opt_state, params)
+        new_params = optax.apply_updates(params, updates)
+        return new_params, new_opt_state, loss
+    
+    best_mean_loss = float('inf') # To check whether the running loss is improving
+    
+    for epoch in range(start_epoch, train_config['num_epochs']):
+        losses = []
+        progress_bar = tqdm(
+            loader,
+            desc=f"Epoch {epoch + 1}/{train_config['num_epochs']}",
+            unit="batch",
+            dynamic_ncols=True,
+        )
+        for batch, _ in progress_bar:
+            batch = jnp.array(batch) # Converting torch tensor -> jnp array
+            batch = jnp.transpose(batch, (0, 2, 3, 1)) # NCHW -> NHWC
+            key, noise_key, t_key = jax.random.split(key, 3)
+            noise = jax.random.normal(noise_key, batch.shape)
+            t = jax.random.randint(t_key, (batch.shape[0],), 0, diffusion_config['num_timesteps'])
+            params, opt_state, loss = train_step(params, opt_state, batch, noise, t)
+            loss_value = float(loss)
+            losses.append(loss_value)
+            progress_bar.set_postfix(
+                loss=f"{loss_value:.4f}",
+                avg_loss=f"{np.mean(losses):.4f}",
+            )
+        epoch_mean_loss = np.mean(losses)
+        tqdm.write(f'Epoch {epoch+1} | Loss: {epoch_mean_loss:.4f}')
+        if epoch_mean_loss < best_mean_loss:
+            best_mean_loss = epoch_mean_loss
+            checkpointer.save(      
+                os.path.join(ckpt_dir, f'epoch_{epoch + 1}'),
+                params,
+                force=True
+            )
 
+train()
+
+# Now we have to implement the inference loop -> in infer.py
