@@ -8,7 +8,7 @@ Exploring JAX and XLA through DL models: DDPM, ViT, etc.
 
 Denoising Diffusion Probabilistic Models using Jax.
 
-Currently trains on CIFAR100, to run the training loop modify config.yaml as required and:
+Currently trains on CIFAR100 by default (to run the training loop on a custom folder of images, set name to `custom` and the corresponding path to the folder in (config.yaml)[ddpm/config.yaml]).
 ```bash
 # Activate your virtual environment
 pip install -r req.txt # Make sure you set the jax cuda version based on your cuda version
@@ -16,12 +16,11 @@ cd ddpm
 python3 ddpm.py
 ```
 
-To run the inference loop (make sure to comment out line 478 in [ddpm.py](ddpm/ddpm.py) to disable the training loop before running inference):
+To run the inference loop:
 ```bash
 cd ddpm
 python3 ddpm_infer.py
 ```
 
 ## todo
-1. Implement DDPM training loop on custom datasets
-2. Benchmarking for the DDPM inference results
+1. Benchmark the DDPM inference results

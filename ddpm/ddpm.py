@@ -11,9 +11,11 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import tqdm
+import torch
+from PIL import Image
+from pathlib import Path
 
 jax.config.update("jax_default_device", jax.devices("gpu")[0])
-
 
 ## Linear noise scheduler
 class LinearNoiseScheduler:
@@ -430,7 +432,7 @@ class Unet(nn.Module):
         out = nn.activation.silu(out)
         return self.conv_out(out)
 
-
+# Some helper functions for training and data loading
 def get_latest_checkpoint(ckpt_dir):
     if not os.path.isdir(ckpt_dir):
         return None, 0
@@ -451,6 +453,17 @@ def get_latest_checkpoint(ckpt_dir):
 
     return latest_path, latest_epoch
 
+class ImageDataset(torch.utils.data.Dataset):
+    EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
+    def __init__(self, folder, transform=None):
+        self.paths = [p for p in Path(folder).rglob('*') if p.suffix.lower() in self.EXTS]
+        self.transform = transform
+    def __len__(self):
+        return len(self.paths)
+    def __getitem__(self, idx):
+        img = Image.open(self.paths[idx]).convert('RGB')
+        return self.transform(img) if self.transform else img, 0
+
 
 def train():
     # Training loop
@@ -465,7 +478,7 @@ def train():
     from torch.utils.data import DataLoader
     from tqdm import tqdm
 
-    # Our training and model configs are in config.yaml, load
+    # Load training and model configs in config.yaml
     config_path = "config.yaml"
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
@@ -486,9 +499,15 @@ def train():
             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
         ]
     )
-    dataset = torchvision.datasets.CIFAR100(
-        root=dataset_config["path"], train=True, download=True, transform=transform
-    )
+    if dataset_config["name"].lower() == "cifar100":
+        dataset = torchvision.datasets.CIFAR100(
+            root=dataset_config["path"], train=True, download=True, transform=transform
+        )
+    elif dataset_config["name"].lower() == "custom":
+        dataset = ImageDataset(dataset_config["path"], transform=transform)
+    else:
+        print(f"No dataset loader implemented yet for dataset: {dataset_config["name"]}. Available options: 'custom','cifar100'")
+        return
     loader = DataLoader(
         dataset,
         batch_size=train_config["batch_size"],
@@ -582,5 +601,9 @@ def train():
             )
 
 
-# Comment this out when running the inference loop
-train()
+import argparse
+parser = argparse.ArgumentParser(description="DDPM training script.")
+parser.add_argument("train", help="Initialize the training loop.", type=bool, default=True)
+args = parser.parse_args()
+if args.train:
+    train()

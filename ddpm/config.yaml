@@ -1,12 +1,12 @@
 dataset:
-  name: cifar100
-  path: ./data
+  name: cifar100 # Or 'custom' if you want to train on a folder of images
+  path: ./data # Leave as is for cifar100, set required folder path for custom dataset
   im_size: 124
 
 model:
   img_channels: 3
-  down_channels: [64, 128, 256, 256]   # 3 down blocks
-  mid_channels: [256, 256]             # 1 mid block; [0]==down[-1], [-1]==down[-2]
+  down_channels: [64, 128, 256, 256] # 3 down blocks
+  mid_channels: [256, 256] # 1 mid block; [0]==down[-1], [-1]==down[-2]
   time_emb_dim: 256
   down_sample: [true, true, false]     
   num_down_layers: 1
