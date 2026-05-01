@@ -2,7 +2,7 @@
 
 Exploring JAX and XLA through DL models: DDPM, ViT, etc. 
 
-**Note: All models run on the GPU using Cuda, so make sure you have cuda-toolkit installed and install [jax](https://docs.jax.dev/en/latest/installation.html) according to your cuda version (check using `nvcc --version` or `nvidia-smi`).**
+**Note: All models run on the GPU using Cuda, so make sure you have cuda-toolkit installed and install [jax](https://docs.jax.dev/en/latest/installation.html) matching your cuda version (check using `nvcc --version` or `nvidia-smi`).**
 
 ## DDPM
 
