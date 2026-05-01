@@ -16,8 +16,12 @@ cd ddpm
 python3 ddpm.py
 ```
 
-To run the inference loop:
+To run the inference loop (make sure to comment out line 478 in [ddpm.py](ddpm/ddpm.py) to disable the training loop before running inference):
 ```bash
 cd ddpm
 python3 ddpm_infer.py
 ```
+
+## todo
+1. Implement DDPM training loop on custom datasets
+2. Benchmarking for the DDPM inference results
