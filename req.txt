@@ -1,0 +1,10 @@
+jax[cuda13]        
+flax
+optax
+orbax-checkpoint
+torch
+torchvision
+pyyaml
+numpy
+tqdm
+Pillow
